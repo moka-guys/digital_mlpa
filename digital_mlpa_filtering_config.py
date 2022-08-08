@@ -1,5 +1,6 @@
 path="/home/erin/Documents/Work/digital_mlpa/digital_mlpa/"
 
+processed_path=path+"processed/"
 
 
 gene_list = {"Pan49" : ["APC", "BMPR1A"],
