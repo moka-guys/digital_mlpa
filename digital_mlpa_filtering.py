@@ -1,47 +1,57 @@
+from lib2to3.pgen2.pgen import DFAState
+from operator import index
+
+from numpy import NaN
 import digital_mlpa_filtering_config as config
 import pandas as pd
 import os
+#import argparse 
 
 # pip install xlsxwriter
 
+### This script will ##
 # 1) Import data from csv
-# challenge will be data sometimes moves... 
-# 2) filter patients based off their pan number
-# do this using a function, with row and filtering needed as an input
-# 3) save one csv per patient with filtered results
-# 4) move the old unfiltered file into a directory 
-# 5) Include debugging options 
-# 6) Include try and except statements 
-# 7) Include a check when opening to see if it's been filtered or not, somehow...
+# 2) Filter patients based off their pan number
+# 3) Save one .xlxs per patient with filtered results
+# 4) Move the unfiltered run file into a directory 
+
+
 
 ## ============ TO DO LIST ============================
-## Move processed file to another folder  - done 
-## Enable script to be run from a button click of an icon 
-## Error handling when pan number isn't found in config - done 
-## Error handling if spreadsheet is in wrong format 
-## Way to check if file has been processed or not? 
-# Add steps and processes to a df, per sample and save to a log
-# rename if processed or add additional sheet in to unfiltered sheet 
+# get this working on trust
+#  Include debugging options - to do
+# Include try and except statements - got some, could have more!
+# Do a shape check for the number of rows?
 
 
 ''' ==================== SCRIPT FUNCTIONS ==================== '''
 
-
 def load_file(run_file):
     # Load file
     df = pd.read_excel(config.path+run_file, header =1)
-    print("=================" + run_file + "================")
+    # This second df is used to save later
+    df_header_kept = pd.read_excel(config.path+run_file)
+    #print(df_header_kept)
+    #print("=================" + run_file + "================") 
     # Check if the files already been processed
-    if "Processed" in df.columns:
+    # will have processed in the file name
+    if "processed" in run_file:
         print("Processed")
-        processed_file = 1
-        # Attempt to move this file to the processed directory
-        move_processed_file(error_occurred, file_location_now, to_move_location)   
+        processed_file = 1  
     else: 
         print ("To be processed")
-        processed_file = 0
-        #print(list(df.columns))
-    return(df, processed_file)
+        processed_file = 0      
+    return(df, processed_file, df_header_kept)
+
+
+def check_shape(df, processed_file):
+   if processed_file == 0:
+       row_count = len(df)
+       if row_count != config.expected_rows:
+           print("Spreadsheet has an unexpected number of rows!")
+       else:
+           print(" Correct shape, continuing")
+
 
 
 def filter_df_and_save(run_df):
@@ -65,34 +75,29 @@ def filter_df_and_save(run_df):
     # so it can be changed if the headers are ever changes
     patient_results_df = run_df.loc[:, run_df.columns.str.contains("Dig") ] 
     patient_results_passed_df = patient_results_df[patient_results_df.columns[patient_results_df.iloc[6] == 'Passed']]
-    # Make another df from the patient_results_passed_df which contains the sample information (but not the probe values)
-    # Select rows 0-7 for new df
-    patient_sample_info_df = patient_results_passed_df.iloc[0:7]
-    # At the start of the loop, get the pan number from the header 
-    # assign to variable 
-    for column in patient_sample_info_df:
+    # Loop through each patient in the df
+    for column in patient_results_passed_df:
         #print(column)
-        # Get each patients pan number by splitting the column header
-        # Something to check if the pan number isn't present here in log
-        # return the pan number used that isn't present into the log with the patient ID?
+        # At the start of the loop, get the pan number from the header 
+        # assign to variable
         patient_pan_number =column.split("-")[1]
         #print(patient_pan_number)
         try: 
             # Concat each colum from the patient results data frame on to the probe df
-            per_patient_df = pd.concat([probes_df ,patient_sample_info_df[column]], axis = 1)
+            per_patient_df = pd.concat([probes_df ,patient_results_passed_df[column]], axis = 1)
+            #print(per_patient_df)
             # Filter the rows of the df, based on the value in genes, based on the patients pan number
-            # also keep them if the value in unamed: 12 is not NaN
             patient_gene_filtered_df = per_patient_df.loc[per_patient_df['Gene'].isin(config.gene_list[patient_pan_number])]
-            #filtered_df = per_patient_df.loc[per_patient_df['Unamed: 12'].notnull()]
-            sample_info = per_patient_df[per_patient_df['Unnamed: 12'].notnull()]
+            # Get the sample info for each patient 
+            sample_info = per_patient_df.iloc[0:6, 10:12]
             # save everything on one sheet #
             # Save both bits on different sheets #
             # Create a Pandas Excel writer using XlsxWriter as the engine.
             # Can set widths, to filtering some columns out <- * after chat to Julia * TO DO *
             writer = pd.ExcelWriter(column + "_multiple.xlsx", engine="xlsxwriter")
             # Write each dataframe to a different worksheet.
-            sample_info.to_excel(writer, sheet_name='Sample_info')
-            patient_gene_filtered_df.to_excel(writer, sheet_name='Gene_filtered')
+            sample_info.to_excel(writer, sheet_name='Sample_info', index= False)
+            patient_gene_filtered_df.to_excel(writer, sheet_name='Gene_filtered', index= False)
             # Close the Pandas Excel writer and output the Excel file.
             writer.save()
             success_string =("Patient from result " + column + " using pan number " 
@@ -104,7 +109,7 @@ def filter_df_and_save(run_df):
                                 'pan_number' : patient_pan_number,
                                 'genes_in_panel': (" ".join(config.gene_list[patient_pan_number]))},
                                 ignore_index=True)  
-        #print(results_df)
+                #print(results_df)
         except: 
             # If pan number isn't present in config flag
             # Add to log
@@ -114,19 +119,41 @@ def filter_df_and_save(run_df):
                                 ignore_index=True)  
             print(patient_pan_number + " not found in config. Sample  " + column + 
                 " could not be processed. Contact Binfx team to add to config : )" )
-    return(results_df)
-
-#def mark_processed_file(file):
+    return(results_df, patient_results_df_failed)
 
 
 
-def move_processed_file(error_occurred, file_location, processed_folder):           
-    # If no errors, move file to /Booked directory
+def create_and_save_logfile(logfile, failed_df, file_location_now, file):
+    # Save the log file for each sample 
+    # Check if any samples failed and add them to the log
+    if failed_df.empty:
+        print("No samples failed!")
+        logfile= logfile.append({'patient_id': "No failed samples in run" ,  
+                                'pan_number' : NaN ,
+                                'genes_in_panel': NaN} ,
+                                ignore_index=True) 
+        #print(logfile)
+    else:
+        print("Samples did fail...")
+        for column in failed_df:
+            logfile= logfile.append({'patient_id': column ,  
+                                    'pan_number' : "Sample failed" ,
+                                    'genes_in_panel': "No filtering undertaken"} ,
+                                    ignore_index=True) 
+            #print(failed_df)
+        #print(logfile)
+    # Save the log file
+    filepath = config.path+file.split(".")[0] + "_log.csv"
+    logfile.to_csv(filepath, index= False)
+
+
+def move_rename_processed_file(error_occurred, file_location, file):           
+    # If no errors, move file to /processed directory
     try:
-        if error_occurred  != True: 
-            # Move the processed file
-            os.rename((file_location), (processed_folder))
-            print("File moved")
+        if error_occurred  == False: 
+            # Move the processed file, changing it's name 
+            os.rename((file_location), (config.processed_path+file.split(".")[0] + "_processed.xls"))
+            print("File moved & renamed")
         else:
             print("error occurred, not moving file")
     except:
@@ -134,35 +161,37 @@ def move_processed_file(error_occurred, file_location, processed_folder):
 
 
 '''================== Run script =========================== ''' 
-
+count =0
 for file in os.listdir(config.path):
-    # Look for all .txt files in the folder  
+    # Look for all .xlsx files in the folder  
+    # Set this variable to false!
+    files_to_process = False
     if file.endswith(".xls"):
+        count = count +1
         # Attempt to load the file, check if it's already been processed 
         files_to_process = True
-        loaded_df, processed_status = load_file(file)
+        loaded_df, processed_status, processed_df_to_save = load_file(file)
         file_location_now = config.path+file
-        to_move_location = config.processed_path+file
+        #to_move_location = config.processed_path+file
         if processed_status == 1:
             error_occurred  = False
-            
-            print(" this file hasn't been processed, but it has been moved!")
+            print("File has already been processed!")
         else:
             # File hasn't been processed, continue with processing 
             print("This file needs prcoessing, continue")
-            filter_df_and_save(loaded_df)
+            # filter and save new files
+            logfile, failed_samples = filter_df_and_save(loaded_df)
+            # Mark them as processed 
+            create_and_save_logfile(logfile, failed_samples, file_location_now, file)
+            #error_occurred = False
+            #mark_processed_file(error_occurred, processed_df_to_save, file_location_now)
             error_occurred  = False
-            #move_processed_file(error_occurred, file_location_now, to_move_location )
+            move_rename_processed_file(error_occurred, file_location_now, file )
             print("File moved")
-        if files_to_process == False:
-            print( "No files ending in .xls in folder to process")
-
-
-
-
-        
-
-
+    # Print out somewhere      
+if count == 0:
+    print( "No files ending in .xls in folder to process")
+       
 
 
 
@@ -180,16 +209,6 @@ for file in os.listdir(config.path):
 
 
 
-
-# Make one df per patient 
-# for column in patient_results_passed_data_df:
-# # each column in the data frame 
-# # Append the probe data frame 
-
-#     print(column)
-#     columnSeriesObj = patient_results_passed_data_df[column]
-#     print('Column Name : ', column)
-#     print('Column Contents : ', columnSeriesObj.values)
 
 
 
