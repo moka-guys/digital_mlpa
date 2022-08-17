@@ -1,8 +1,10 @@
 from numpy import NaN
-import digital_mlpa_filtering_config as config
+import digital_mlpa_filtering_config_update as config
 import pandas as pd
 import os
-
+import configparser 
+#from ConfigParser import ConfigParser
+import pyodbc 
 
 ### This script will ##
 # 1) Import data from csv
@@ -14,6 +16,52 @@ import os
 ## ============ TO DO LIST ============================
 #  Include debugging options - to do
 
+
+# Read config file(must be called config.ini and stored in the same directory as script)
+
+''' =================== MOKA CONNECTIONS ==================== '''
+
+config_parser = configparser()
+#config_parser = ConfigParser()
+print_config = config_parser.read(os.path.join(os.path.dirname(os.path.realpath(__file__)), "config.ini"))
+print(print_config)
+class MokaConnector(object):
+    """
+    pyodbc connection to Moka database for use by other functions
+    
+    """
+    def __init__(self):
+        self.cnxn = pyodbc.connect('DRIVER={{SQL Server}}; SERVER={server}; DATABASE={database};'.format(
+            server=config_parser.get("MOKA", "SERVER"),
+            database=config_parser.get("MOKA", "DATABASE")
+            ),
+            autocommit=True
+        )
+        self.cursor = self.cnxn.cursor()
+
+    def __del__(self):
+        """
+        Close connection when object destroyed
+        """
+        self.cnxn.close()
+
+    def execute(self, sql):
+        """
+        Execute SQL, without catching return values (INSERT, UPDATE etc.)
+        """
+        self.cursor.execute(sql)
+
+    def fetchall(self, sql):
+        """
+        Execute SQL catching all return records (SELECT etc.)
+        """
+        return self.cursor.execute(sql).fetchall()
+
+    def fetchone(self, sql):
+        """
+        Execute SQL catching one returned record (SELECT etc.)
+        """
+        return self.cursor.execute(sql).fetchone()
 
 
 ''' ==================== SCRIPT FUNCTIONS ==================== '''
@@ -46,6 +94,65 @@ def make_run_folder(path_to_runfolder):
         print("Can't make runfolder, does " + file + " already have a folder?")
 
 
+def query_moka_for_panels(run_df, path_to_runfolder):
+    # Send a query to moka for the all the genes related to the sample pan numbers
+      # Empty df to add information to later
+    filters_used_df = pd.DataFrame(columns = ["Patient ID" , "Pan number", "Genes in panel"]) 
+    probes_df = run_df[['Probe order', 'Probe number', 'Gene', 'Exon', 'Mapview (hg38)', 
+                        'Chromosomal band (hg38)', 'Normal copy number', 'Probe type', 
+                        'Reference probe', 'Additional information']]
+    # Remove NaN rows 
+    probes_df=probes_df.dropna(how='all')
+    patient_results_passed_df = run_df[run_df.columns[run_df.iloc[6] == 'Passed']]
+    print("HEADERS")
+    # Get all the unique headers in the df
+    pan_numbers_to_find = list(set(patient_results_passed_df.columns))
+    print(list(set(patient_results_passed_df.columns)))
+    # For each unique pan number, query Moka for the gene synmbols 
+    for column in patient_results_passed_df:
+        patient_pan_number =column.split("-")[1]
+        #print(patient_pan_number)
+        get_genes = ( " SELECT [NGSPanelGenes].[Symbol] "
+                    " FROM [NGSPanelGenes] INNER JOIN [NGSPanel] ON [NGSPanelGenes].[NGSPanelID] = [NGSPanel].[NGSPanelID] "
+                    " WHERE [NGSPanel].[PanelCode]='{pan_number}'"
+        ).format(
+            pan_number = patient_pan_number 
+        )
+        get_genes_sql = mc.fetchall(get_genes) 
+        # Returns a list of tuples
+        # make into a list
+        gene_list = [item for t in get_genes_sql for item in t]
+        # Get the sample info for each patient 
+        sample_info = patient_results_passed_df[column].drop(patient_results_passed_df[column].index[7:])
+        # turn it into a dataframe for saving later
+        sample_info = sample_info.to_frame()
+        # Attach the row headers from the config
+        sample_info.insert(0, "sample_info_pt", config.sample_info_names)
+        # Make a data frame which is only the results of the patient being looped over
+        
+        patient_results_passed_drop_df = patient_results_passed_df[column].drop(patient_results_passed_df[column].index[0:7])
+        # Concat the probes dataframe to the patients results
+        per_patient_df = pd.concat([probes_df ,patient_results_passed_drop_df], axis = 1)
+       # print(per_patient_df)
+        # Filter the rows of the df, based on the value in genes, based on the patients pan number
+        patient_gene_filtered_df = per_patient_df.loc[per_patient_df['Gene'].isin(gene_list)]  
+        writer = pd.ExcelWriter(path_to_runfolder + "/" + column + "_filtered_results.xlsx", engine="xlsxwriter")
+        # Write each dataframe to a different worksheet.
+        sample_info.to_excel(writer, sheet_name='Sample info', index= False)
+        patient_gene_filtered_df.to_excel(writer, sheet_name='Gene filtered results', index= False)
+        # Close the Pandas Excel writer and output the Excel file.
+        writer.save()
+        # Append the patient ID and genes used in filtering to the log file 
+        filters_used_df= filters_used_df.append({'Patient ID': column ,  
+                            'Pan number' : patient_pan_number,
+                            'Genes in panel': (" ".join(gene_list))},
+                            ignore_index=True)   
+       
+ 
+
+
+
+
 def filter_df_and_save(run_df, path_to_runfolder):
     # Empty df to add information to later
     filters_used_df = pd.DataFrame(columns = ["Patient ID" , "Pan number", "Genes in panel"]) 
@@ -60,6 +167,7 @@ def filter_df_and_save(run_df, path_to_runfolder):
     # Get all the samples which passed QC
     patient_results_passed_df = run_df[run_df.columns[run_df.iloc[6] == 'Passed']]
     # Loop through each column (patient result) in the df
+    #print(patient_results_failed_df)
     for column in patient_results_passed_df:
         # At the start of the loop, get the pan number from the header 
         patient_pan_number =column.split("-")[1]
@@ -133,41 +241,44 @@ def move_rename_processed_file(error_occurred, file):
 
 
 '''================== Run script =========================== ''' 
-
+'''================== One off variables =========================== '''
+# Instantiate moka connector
+mc = MokaConnector()
 # Counter for if there are no sheets to process
 count =0
-try:
-    for file in os.listdir(config.path):
-        # Look for all .xlsx files in the folder 
-        if file.endswith(".xls"):
-            print("Found this .xls file : " + file)
-            count = count +1
-            # Load the file & check if it's already been processed  
-            loaded_df, processed_status, error_occurred = load_file(file)
-            # File doesn't have the expected number of rows
-            if error_occurred == True:
-                with open(config.path + "error_log_"+ file.split(".")[0] + ".txt", "w") as f:
-                        f.write ("Results sheet doesn't have the expected number of rows. Contact bioinformatics team")
-                        print("ERROR OCCURRED, please see error_log file")     
-            if processed_status == 1:
-                print(file + " has already been processed")
-            elif error_occurred == False:
-                # File hasn't been processed, continue with processing 
-                print(file + " has not been processed, running filtering scripts")
-                # Create path to runfolder
-                path_to_runfolder = config.path+file.split(".")[0]
-                # Make run folder directory 
-                make_run_folder(path_to_runfolder)
-                # Filter and save new files
-                logfile, failed_samples = filter_df_and_save(loaded_df, path_to_runfolder)
-                # Create logfile per run
-                create_and_save_logfile(logfile, failed_samples,  path_to_runfolder)
-                # Mark them as processed 
-                move_rename_processed_file(error_occurred, file)
-    if count == 0:
-        print( "No files ending in .xls in folder to process")
-except:
-    print("Unexpected error occurred, contain bioinformatics team")       
+#try:
+for file in os.listdir(config.path):
+    # Look for all .xlsx files in the folder 
+    if file.endswith(".xls"):
+        print("Found this .xls file : " + file)
+        count = count +1
+        # Load the file & check if it's already been processed  
+        loaded_df, processed_status, error_occurred = load_file(file)
+        # File doesn't have the expected number of rows
+        if error_occurred == True:
+            with open(config.path + "error_log_"+ file.split(".")[0] + ".txt", "w") as f:
+                    f.write ("Results sheet doesn't have the expected number of rows. Contact bioinformatics team")
+                    print("ERROR OCCURRED, please see error_log file")     
+        if processed_status == 1:
+            print(file + " has already been processed")
+        elif error_occurred == False:
+            # File hasn't been processed, continue with processing 
+            print(file + " has not been processed, running filtering scripts")
+            # Create path to runfolder
+            path_to_runfolder = config.path+file.split(".")[0]
+            # Make run folder directory 
+            make_run_folder(path_to_runfolder)
+            # Filter and save new files
+            query_moka_for_panels(loaded_df, path_to_runfolder)
+            logfile, failed_samples = filter_df_and_save(loaded_df, path_to_runfolder)
+            # Create logfile per run
+            create_and_save_logfile(logfile, failed_samples,  path_to_runfolder)
+            # Mark them as processed 
+           # move_rename_processed_file(error_occurred, file)
+#     if count == 0:
+#         print( "No files ending in .xls in folder to process")
+# except:
+#     print("Unexpected error occurred, contain bioinformatics team")       
 
 
 
