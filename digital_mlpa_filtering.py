@@ -1,30 +1,29 @@
+import digital_mlpa_filtering_config as config
 from numpy import NaN
-import digital_mlpa_filtering_config_update as config
 import pandas as pd
 import os
-import configparser 
-#from ConfigParser import ConfigParser
+#from configparser import ConfigParser
+#import configparser 
+from datetime import date
+from ConfigParser import ConfigParser
 import pyodbc 
+#import xlrd
 
 ### This script will ##
 # 1) Import data from csv
-# 2) Filter patients based off their pan number
-# 3) Save one .xlxs per patient with filtered results
-# 4) Save filtered results in a run folder, with a logfile
-# 5) Move the unfiltered run file into a directory 
-
-## ============ TO DO LIST ============================
-#  Include debugging options - to do
-
-
-# Read config file(must be called config.ini and stored in the same directory as script)
+# 2) Send a query to Moka for the genes based on the pan numbers
+# 3) Filter patients based off their pan number
+# 4) Save one .xlxs per patient with filtered results
+# 5) Save filtered results in a run folder, with a logfile
+# 6) Move the unfiltered run file into a directory 
 
 ''' =================== MOKA CONNECTIONS ==================== '''
 
-config_parser = configparser()
-#config_parser = ConfigParser()
+# Read config file(must be called config.ini and stored in the same directory as script)
+#config_parser = configparser()
+config_parser = ConfigParser()
 print_config = config_parser.read(os.path.join(os.path.dirname(os.path.realpath(__file__)), "config.ini"))
-print(print_config)
+
 class MokaConnector(object):
     """
     pyodbc connection to Moka database for use by other functions
@@ -68,7 +67,12 @@ class MokaConnector(object):
 
 
 def load_file(file):
-    # check if the file has already been processed
+    '''
+    This function checks if files have already been processed 
+    Loads it into a dataframe and checks it has the expected number of rows
+    INPUT: Path to a .xlsx file
+    RETURN: dataframe, boolean of processed status, boolean for error
+    '''
     if "processed" in file:
         file_processed = 1  
         error_occurred = False
@@ -76,17 +80,34 @@ def load_file(file):
     else: 
         # Load file
         df = pd.read_excel(config.path+file, header =1).reset_index(drop=True)
-        # Check if the file has already been processed
         file_processed = 0
+        # Check df has expected row count
         if len(df.index) == config.expected_row_count:
             error_occurred = False
         else:
             error_occurred = True
     return(df, file_processed, error_occurred)
 
+def error_log(path, error_message):
+    '''
+    This function creates & writes to an error log
+    INPUT: path, error message
+    RETURN: None
+    '''
+    date = today.strftime("%b-%d-%Y")
+    error_message = str(error_message)
+    with open(config.path + "error_log_"+ date + ".txt", "w") as f:
+            f.write (error_message)
+            print("ERROR OCCURRED, please see error_log file")
+
+
 
 def make_run_folder(path_to_runfolder):
-    # Make a run folder for the filtered samples  
+    '''
+    This function creates the run folder for the filtered results to go into
+    INPUT: Path to run sheet being processed 
+    RETURN: None
+    '''
     try: 
         os.makedirs(path_to_runfolder + "/logfile")
     except:
@@ -94,119 +115,128 @@ def make_run_folder(path_to_runfolder):
         print("Can't make runfolder, does " + file + " already have a folder?")
 
 
-def query_moka_for_panels(run_df, path_to_runfolder):
-    # Send a query to moka for the all the genes related to the sample pan numbers
-      # Empty df to add information to later
-    filters_used_df = pd.DataFrame(columns = ["Patient ID" , "Pan number", "Genes in panel"]) 
-    probes_df = run_df[['Probe order', 'Probe number', 'Gene', 'Exon', 'Mapview (hg38)', 
-                        'Chromosomal band (hg38)', 'Normal copy number', 'Probe type', 
-                        'Reference probe', 'Additional information']]
-    # Remove NaN rows 
-    probes_df=probes_df.dropna(how='all')
-    patient_results_passed_df = run_df[run_df.columns[run_df.iloc[6] == 'Passed']]
-    print("HEADERS")
-    # Get all the unique headers in the df
-    pan_numbers_to_find = list(set(patient_results_passed_df.columns))
-    print(list(set(patient_results_passed_df.columns)))
-    # For each unique pan number, query Moka for the gene synmbols 
-    for column in patient_results_passed_df:
-        patient_pan_number =column.split("-")[1]
-        #print(patient_pan_number)
-        get_genes = ( " SELECT [NGSPanelGenes].[Symbol] "
-                    " FROM [NGSPanelGenes] INNER JOIN [NGSPanel] ON [NGSPanelGenes].[NGSPanelID] = [NGSPanel].[NGSPanelID] "
-                    " WHERE [NGSPanel].[PanelCode]='{pan_number}'"
-        ).format(
-            pan_number = patient_pan_number 
-        )
-        get_genes_sql = mc.fetchall(get_genes) 
-        # Returns a list of tuples
-        # make into a list
-        gene_list = [item for t in get_genes_sql for item in t]
-        # Get the sample info for each patient 
-        sample_info = patient_results_passed_df[column].drop(patient_results_passed_df[column].index[7:])
-        # turn it into a dataframe for saving later
-        sample_info = sample_info.to_frame()
-        # Attach the row headers from the config
-        sample_info.insert(0, "sample_info_pt", config.sample_info_names)
-        # Make a data frame which is only the results of the patient being looped over
-        
-        patient_results_passed_drop_df = patient_results_passed_df[column].drop(patient_results_passed_df[column].index[0:7])
-        # Concat the probes dataframe to the patients results
-        per_patient_df = pd.concat([probes_df ,patient_results_passed_drop_df], axis = 1)
-       # print(per_patient_df)
-        # Filter the rows of the df, based on the value in genes, based on the patients pan number
-        patient_gene_filtered_df = per_patient_df.loc[per_patient_df['Gene'].isin(gene_list)]  
-        writer = pd.ExcelWriter(path_to_runfolder + "/" + column + "_filtered_results.xlsx", engine="xlsxwriter")
-        # Write each dataframe to a different worksheet.
-        sample_info.to_excel(writer, sheet_name='Sample info', index= False)
-        patient_gene_filtered_df.to_excel(writer, sheet_name='Gene filtered results', index= False)
-        # Close the Pandas Excel writer and output the Excel file.
-        writer.save()
-        # Append the patient ID and genes used in filtering to the log file 
-        filters_used_df= filters_used_df.append({'Patient ID': column ,  
-                            'Pan number' : patient_pan_number,
-                            'Genes in panel': (" ".join(gene_list))},
-                            ignore_index=True)   
-       
- 
+def get_gene_symbols_from_moka(run_df):
+    '''
+    This queries moka to find the gene symbols list 
+    for each pan number in the spreadsheet
+    INPUT: Path to run sheet being processed 
+    RETURN: Pan numbers with genes
+    '''
+    try:
+        pan_numbers_to_find_in_moka = []
+        pan_numbers_with_genes = {}
+        # Get all the patients who passed QC
+        patient_results_passed_df = run_df[run_df.columns[run_df.iloc[6] == 'Passed']]
+        # Get just the sample names 
+        df_headers = patient_results_passed_df.columns.values.tolist()
+        for sample_name in df_headers:
+            # Get the Pan number
+            pan_number = sample_name.split("-")[1]
+            pan_numbers_to_find_in_moka.append(pan_number)
+        # Get all the unique pan numbers in the df
+        unique_pan_numbers_to_find = list(set(pan_numbers_to_find_in_moka))
+        # For each unique pan number, query Moka for the gene symbols 
+        for patient_pan_number in unique_pan_numbers_to_find:
+            # Build SQL query
+            get_genes = ( " SELECT [NGSPanelGenes].[Symbol] "
+                        " FROM [NGSPanelGenes] INNER JOIN [NGSPanel] ON [NGSPanelGenes].[NGSPanelID] = [NGSPanel].[NGSPanelID] "
+                        " WHERE [NGSPanel].[PanelCode]='{pan_number}'"
+            ).format(
+                pan_number = patient_pan_number 
+            )
+            # Execute SQL query
+            get_genes_sql = mc.fetchall(get_genes) 
+            # Above query returns a list of tuples, this makes it into a list
+            gene_list = ['","'.join(map(str, row)) for row in get_genes_sql]
+            # If the pan number isn't found in Moka
+            if not gene_list:
+                gene_list = ("Pan number doesn't exist in Moka")
+            # Add the gene lists to a dictionary, where the pan number 
+            # is the key and the list of genes in the value pair 
+            pan_numbers_with_genes[patient_pan_number] = gene_list
+            error_occurred = False
+            e = " "
+    except Exception as e:
+        error_occurred = True
+    return(pan_numbers_with_genes, error_occurred, e)
+    
 
-
-
-
-def filter_df_and_save(run_df, path_to_runfolder):
+def filter_results(run_df, path_to_runfolder, pan_numbers_genes_dic):
+    '''
+    This function splits the spreadsheet into different dataframes
+    Probe names, control probes and patient results 
+    Patient results are filtered by gene list & then added to other dfs
+    Saves a per patient sheet 
+    Populates a log of which samples were filtered with which genes
+    INPUT: df for spreadsheet being processed, path to run sheet being processed 
+    RETURN: Filters used on each sample for logging, a df of any samples which failed QC
+    '''
     # Empty df to add information to later
     filters_used_df = pd.DataFrame(columns = ["Patient ID" , "Pan number", "Genes in panel"]) 
-    # Separate out the probes into one df & patients into another 
+    # Make a df of just the probes information 
     probes_df = run_df[['Probe order', 'Probe number', 'Gene', 'Exon', 'Mapview (hg38)', 
                         'Chromosomal band (hg38)', 'Normal copy number', 'Probe type', 
                         'Reference probe', 'Additional information']]
     # Remove NaN rows 
     probes_df=probes_df.dropna(how='all')
-    # Put QC failed samples into a separate df  <- * CHECK THIS IS WHAT JULIA WANTS *
+    # Put QC failed samples into a separate df 
     patient_results_failed_df = run_df[run_df.columns[run_df.iloc[6] == 'Failed']]
-    # Get all the samples which passed QC
+    # Get all the patients who passed QC
     patient_results_passed_df = run_df[run_df.columns[run_df.iloc[6] == 'Passed']]
-    # Loop through each column (patient result) in the df
-    #print(patient_results_failed_df)
+    # Get all the unique headers in the df
+    # For each unique pan number, query Moka for the gene symbols 
     for column in patient_results_passed_df:
-        # At the start of the loop, get the pan number from the header 
         patient_pan_number =column.split("-")[1]
-        try: 
+        try:
             # Get the sample info for each patient 
             sample_info = patient_results_passed_df[column].drop(patient_results_passed_df[column].index[7:])
             # turn it into a dataframe for saving later
             sample_info = sample_info.to_frame()
             # Attach the row headers from the config
             sample_info.insert(0, "sample_info_pt", config.sample_info_names)
-            # Make a data frame which is only the results of the patient being looped over
+            # Make a data frame which is only the probe results of the patient being looped over
             patient_results_passed_drop_df = patient_results_passed_df[column].drop(patient_results_passed_df[column].index[0:7])
             # Concat the probes dataframe to the patients results
             per_patient_df = pd.concat([probes_df ,patient_results_passed_drop_df], axis = 1)
             # Filter the rows of the df, based on the value in genes, based on the patients pan number
-            patient_gene_filtered_df = per_patient_df.loc[per_patient_df['Gene'].isin(config.gene_list[patient_pan_number])]
-            # Create a Pandas Excel writer using XlsxWriter as the engine.
-            # Can set widths, to filtering some columns out <- * after chat to Julia * TO DO *
+            patient_gene_filtered_df = per_patient_df.loc[per_patient_df['Gene'].isin(pan_numbers_genes_dic[patient_pan_number])]  
+            # Get the control probes for this patient
+            patient_control_df = per_patient_df.loc[per_patient_df['Probe type'].str.match("CTRL")]
+            # Concat the gene filtered & control probes
+            patient_gene_filtered_control_df = pd.concat([patient_gene_filtered_df, patient_control_df])
+            # Convert the results column to a float
+            # Will raise a message to user about changes being on a copy, errors flag stops this
+            # Round to three significant figures 
+            patient_gene_filtered_control_df[column] =patient_gene_filtered_control_df[column].astype(float, errors ="ignore").round(3)
+            # Create a xlsx to write data too
             writer = pd.ExcelWriter(path_to_runfolder + "/" + column + "_filtered_results.xlsx", engine="xlsxwriter")
             # Write each dataframe to a different worksheet.
             sample_info.to_excel(writer, sheet_name='Sample info', index= False)
-            patient_gene_filtered_df.to_excel(writer, sheet_name='Gene filtered results', index= False)
+            patient_gene_filtered_control_df.to_excel(writer, sheet_name='Gene filtered results', index= False)
             # Close the Pandas Excel writer and output the Excel file.
             writer.save()
             # Append the patient ID and genes used in filtering to the log file 
             filters_used_df= filters_used_df.append({'Patient ID': column ,  
                                 'Pan number' : patient_pan_number,
-                                'Genes in panel': (" ".join(config.gene_list[patient_pan_number]))},
-                                ignore_index=True)  
+                                'Genes in panel': (" ".join((pan_numbers_genes_dic[patient_pan_number])))},
+                                ignore_index=True)   
         except: 
-            # If pan number isn't present in config add to log
+            # If pan number isn't present in Moka add to log
             filters_used_df= filters_used_df.append({'Patient ID': column ,  
                                 'Pan number' : patient_pan_number,
-                                'Genes in panel': "ERROR: Pan number not found in config"},
+                                'Genes in panel': "ERROR: Pan number not found in Moka"},
                                 ignore_index=True)  
     return(filters_used_df, patient_results_failed_df)
+      
  
 
 def create_and_save_logfile(logfile, failed_df,  path_to_runfolder):
+    '''
+    This function saves a log file based on the filtering 
+    for each samples
+    INPUT: Logfile df, failed samples df, path to runfolder
+    RETURN: None
+    '''
     # Save the log file for each sample 
     # Check if any samples failed and add them to the log
     if failed_df.empty:
@@ -215,7 +245,6 @@ def create_and_save_logfile(logfile, failed_df,  path_to_runfolder):
                                 'Genes in panel': NaN} ,
                                 ignore_index=True) 
     else:
-        #print("Please check log for this run")
         for column in failed_df:
             logfile= logfile.append({'Patient ID': column ,  
                                     'Pan number' : "Sample failed" ,
@@ -226,7 +255,13 @@ def create_and_save_logfile(logfile, failed_df,  path_to_runfolder):
 
 
                
-def move_rename_processed_file(error_occurred, file):           
+def move_rename_processed_file(error_occurred, file):     
+    '''
+    This function saves a log file based on the filtering 
+    for each samples
+    INPUT: Logfile df, failed samples df, path to runfolder
+    RETURN: None
+    '''      
     # If no errors, rename & move file to /processed directory
     try:
             # Change the file name
@@ -240,61 +275,62 @@ def move_rename_processed_file(error_occurred, file):
         print('Could not move file to /processed folder. Is there a file with the same name in that folder?') 
 
 
-'''================== Run script =========================== ''' 
+
 '''================== One off variables =========================== '''
-# Instantiate moka connector
-mc = MokaConnector()
+today = date.today()
+
+# Attempt to instantiate moka connector
+try:
+    mc = MokaConnector()
+except Exception as e:
+    print("Error connecting to Moka")
+    path_to_runfolder = config.path
+    error_log(path_to_runfolder, e)
+    
+'''================== Run script =========================== ''' 
+
 # Counter for if there are no sheets to process
 count =0
-#try:
-for file in os.listdir(config.path):
-    # Look for all .xlsx files in the folder 
-    if file.endswith(".xls"):
-        print("Found this .xls file : " + file)
-        count = count +1
-        # Load the file & check if it's already been processed  
-        loaded_df, processed_status, error_occurred = load_file(file)
-        # File doesn't have the expected number of rows
-        if error_occurred == True:
-            with open(config.path + "error_log_"+ file.split(".")[0] + ".txt", "w") as f:
-                    f.write ("Results sheet doesn't have the expected number of rows. Contact bioinformatics team")
-                    print("ERROR OCCURRED, please see error_log file")     
-        if processed_status == 1:
-            print(file + " has already been processed")
-        elif error_occurred == False:
-            # File hasn't been processed, continue with processing 
-            print(file + " has not been processed, running filtering scripts")
+try:
+    for file in os.listdir(config.path):
+        # Look for all .xlsx files in the folder 
+        if file.endswith(".xls"):
+            print("Found this .xls file : " + file)
+            count = count +1
+            # Load the file & check if it's already been processed  
+            loaded_df, processed_status, error_occurred = load_file(file)
+            # File doesn't have the expected number of rows
             # Create path to runfolder
             path_to_runfolder = config.path+file.split(".")[0]
-            # Make run folder directory 
-            make_run_folder(path_to_runfolder)
-            # Filter and save new files
-            query_moka_for_panels(loaded_df, path_to_runfolder)
-            logfile, failed_samples = filter_df_and_save(loaded_df, path_to_runfolder)
-            # Create logfile per run
-            create_and_save_logfile(logfile, failed_samples,  path_to_runfolder)
-            # Mark them as processed 
-           # move_rename_processed_file(error_occurred, file)
-#     if count == 0:
-#         print( "No files ending in .xls in folder to process")
-# except:
-#     print("Unexpected error occurred, contain bioinformatics team")       
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+            if error_occurred == True:
+                error_message = file + " sheet doesn't have the expected number of rows. Contact bioinformatics team "
+                error_log(path_to_runfolder, error_message)    
+            if processed_status == 1:
+                print(file + " has already been processed")
+            elif error_occurred == False:
+                # File hasn't been processed, continue with processing 
+                print(file + " has not been processed, running filtering scripts")
+                # Make run folder directory 
+                make_run_folder(path_to_runfolder)
+                # Filter and save new files via a moka query for genes
+                gene_list, error_occurred, error_string = get_gene_symbols_from_moka(loaded_df)
+                if error_occurred == True:
+                    error_log(path_to_runfolder,  error_string)
+                else:
+                    logfile, failed_samples = filter_results(loaded_df, path_to_runfolder, gene_list)
+                    # Create logfile per run
+                    create_and_save_logfile(logfile, failed_samples,  path_to_runfolder)
+                    # Mark them as processed 
+                    move_rename_processed_file(error_occurred, file)
+    if count == 0:
+        print( "No files ending in .xls in folder to process")
+except Exception as e:
+    error_occurred = True
+    if error_occurred == True:
+        # If an unknown error occurred, save to 
+        path_to_runfolder = config.path
+        error_log(path_to_runfolder,  e)
+        print("Unexpected error occurred, contain bioinformatics team")       
 
 
 
