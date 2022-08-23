@@ -10,13 +10,18 @@ To prevent incidental findings, these scripts have been created to filter the re
 
 This script:
  1) Imports unfiltered digital MLPA data from an xls
- 2) Filter patients based off their pan number
- 3) Save one .xlxs per patient with filtered results
- 4) Save filtered results in a run folder, with a logfile
- 5) Move the unfiltered run file into the processed directory 
+ 2) Looks in Moka to find the gene symbols which match the pan number
+ 3) Filter patients based off their pan number
+ 4) Create a directory for the filtered files
+ 5) Save one .xlxs per patient with filtered results
+ 6) Save filtered results in the directory, with a logfile
+ 7) Flag samples which the pan number wasn't in Moka & which samples failed QC
+ 8) Move the unfiltered run file into the processed directory 
 
 Errors will flag when:
 - The xls has a different number of rows than expected
+- There's an issue with the Moka connection
+
 
 # "Double click to run filtering script.bat"
 
