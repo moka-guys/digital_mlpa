@@ -6,7 +6,7 @@ from configparser import ConfigParser
 from datetime import date
 import pyodbc 
 import xlrd
-#import xlsxwriter
+import xlsxwriter
 import sys
 
 # Need to change the python path to find the config
@@ -213,21 +213,19 @@ def filter_results(run_df, path_to_runfolder, pan_numbers_genes_dic):
             # Will raise a message to user about changes being on a copy, errors flag stops this
             # Round to three significant figures 
             patient_gene_filtered_control_df[column] =patient_gene_filtered_control_df[column].astype(float, errors ="ignore").round(3)
-            file_path = path_to_runfolder + "/" + column + "_filtered_results.csv"
-            patient_gene_filtered_control_df.to_csv(file_path, index=False)
             # Create a xlsx to write data too
-            # writer = pd.ExcelWriter(path_to_runfolder + "/" + column + "_filtered_results.xlsx", engine="xlsxwriter")
+            writer = pd.ExcelWriter(path_to_runfolder + "/" + column + "_filtered_results.xlsx", engine="xlsxwriter")
             # Write each dataframe to a different worksheet.
-            # sample_info.to_excel(writer, sheet_name='Sample info', index= False)
-            # patient_gene_filtered_control_df.to_excel(writer, sheet_name='Gene filtered results', index= False)
+            sample_info.to_excel(writer, sheet_name='Sample info', index= False)
+            patient_gene_filtered_control_df.to_excel(writer, sheet_name='Gene filtered results', index= False)
             # Close the Pandas Excel writer and output the Excel file.
-        # writer.save()
+            writer.save()
             #  Make a df of the genes used for this sample
             filters_used_df_patient= pd.DataFrame({'Patient ID': column ,  
                                 'Pan number' : patient_pan_number,
                                 'Genes in panel': [(" ".join((pan_numbers_genes_dic[patient_pan_number])))]}
                                 , index = [0,1,2])   
-     
+        
             filters_used_df = pd.concat([filters_used_df,filters_used_df_patient], axis = 0, ignore_index = True)
         except: 
             # If pan number isn't present in Moka add to log
@@ -294,8 +292,8 @@ def move_rename_processed_file(error_occurred, file):
 
 
 '''================== One off variables =========================== '''
-today = date.today()
 
+today = date.today()
 # Attempt to instantiate moka connector
 try:
     mc = MokaConnector()
@@ -346,7 +344,7 @@ try:
 except Exception as e:
     error_occurred = True
     if error_occurred == True:
-        # If an unknown error occurred, save to 
+        # If an unknown error occurred, save to error file
         path_to_runfolder = config.path
         error_log(path_to_runfolder,  e)
         print("Unexpected error occurred, contain bioinformatics team")       
