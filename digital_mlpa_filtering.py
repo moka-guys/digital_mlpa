@@ -1,13 +1,19 @@
-import digital_mlpa_filtering_config as config
+#python 3.10.10
 from numpy import NaN
 import pandas as pd
 import os
-#from configparser import ConfigParser
-#import configparser 
+from configparser import ConfigParser
 from datetime import date
-from ConfigParser import ConfigParser
 import pyodbc 
-#import xlrd
+import xlrd
+#import xlsxwriter
+import sys
+
+# Need to change the python path to find the config
+path_to_config = "H:/06_digital_mlpa/scripts"
+sys.path.insert(0, path_to_config)
+import digital_mlpa_filtering_config as config
+
 
 ### This script will ##
 # 1) Import data from csv
@@ -20,7 +26,6 @@ import pyodbc
 ''' =================== MOKA CONNECTIONS ==================== '''
 
 # Read config file(must be called config.ini and stored in the same directory as script)
-#config_parser = configparser()
 config_parser = ConfigParser()
 print_config = config_parser.read(os.path.join(os.path.dirname(os.path.realpath(__file__)), "config.ini"))
 
@@ -208,24 +213,30 @@ def filter_results(run_df, path_to_runfolder, pan_numbers_genes_dic):
             # Will raise a message to user about changes being on a copy, errors flag stops this
             # Round to three significant figures 
             patient_gene_filtered_control_df[column] =patient_gene_filtered_control_df[column].astype(float, errors ="ignore").round(3)
+            file_path = path_to_runfolder + "/" + column + "_filtered_results.csv"
+            patient_gene_filtered_control_df.to_csv(file_path, index=False)
             # Create a xlsx to write data too
-            writer = pd.ExcelWriter(path_to_runfolder + "/" + column + "_filtered_results.xlsx", engine="xlsxwriter")
+            # writer = pd.ExcelWriter(path_to_runfolder + "/" + column + "_filtered_results.xlsx", engine="xlsxwriter")
             # Write each dataframe to a different worksheet.
-            sample_info.to_excel(writer, sheet_name='Sample info', index= False)
-            patient_gene_filtered_control_df.to_excel(writer, sheet_name='Gene filtered results', index= False)
+            # sample_info.to_excel(writer, sheet_name='Sample info', index= False)
+            # patient_gene_filtered_control_df.to_excel(writer, sheet_name='Gene filtered results', index= False)
             # Close the Pandas Excel writer and output the Excel file.
-            writer.save()
-            # Append the patient ID and genes used in filtering to the log file 
-            filters_used_df= filters_used_df.append({'Patient ID': column ,  
+        # writer.save()
+            #  Make a df of the genes used for this sample
+            filters_used_df_patient= pd.DataFrame({'Patient ID': column ,  
                                 'Pan number' : patient_pan_number,
-                                'Genes in panel': (" ".join((pan_numbers_genes_dic[patient_pan_number])))},
-                                ignore_index=True)   
+                                'Genes in panel': [(" ".join((pan_numbers_genes_dic[patient_pan_number])))]}
+                                , index = [0,1,2])   
+     
+            filters_used_df = pd.concat([filters_used_df,filters_used_df_patient], axis = 0, ignore_index = True)
         except: 
             # If pan number isn't present in Moka add to log
-            filters_used_df= filters_used_df.append({'Patient ID': column ,  
+            filters_used_df_patient = pd.DataFrame({'Patient ID': column ,  
                                 'Pan number' : patient_pan_number,
                                 'Genes in panel': "ERROR: Pan number not found in Moka"},
-                                ignore_index=True)  
+                                index = [0,1,2])  
+            filters_used_df = pd.concat([filters_used_df,filters_used_df_patient], axis = 0, ignore_index = True)
+        
     return(filters_used_df, patient_results_failed_df)
       
  
@@ -240,18 +251,24 @@ def create_and_save_logfile(logfile, failed_df,  path_to_runfolder):
     # Save the log file for each sample 
     # Check if any samples failed and add them to the log
     if failed_df.empty:
-        logfile= logfile.append({'Patient ID': "No failed samples in run" ,  
+        # Make a df of failed sample information 
+        # Add it to the bottom of the log 
+        logfile_no_failed_samples =  pd.DataFrame({'Patient ID': "No failed samples in run" ,  
                                 'Pan number' : NaN ,
                                 'Genes in panel': NaN} ,
-                                ignore_index=True) 
+                                  index = [0,1,2]) 
+        logfile = pd.concat([logfile, logfile_no_failed_samples], axis = 0, ignore_index = True)
     else:
         for column in failed_df:
-            logfile= logfile.append({'Patient ID': column ,  
+            logfile_failed_samples  = pd.DataFrame({'Patient ID': column ,  
                                     'Pan number' : "Sample failed" ,
                                     'Genes in panel': "No filtering undertaken"} ,
-                                    ignore_index=True)    
+                                      index = [0,1,2])    
+            logfile = pd.concat([logfile, logfile_failed_samples], axis = 0, ignore_index = True)
+    # As this df was made in a loop, there are duplicate entries 
+    logfile_duplicates_removed = logfile.drop_duplicates()
     filepath_log = path_to_runfolder +"/logfile/"+file.split(".")[0] + "_log.csv"
-    logfile.to_csv(filepath_log, index= False)
+    logfile_duplicates_removed.to_csv(filepath_log, index= False)
 
 
                
@@ -284,8 +301,10 @@ try:
     mc = MokaConnector()
 except Exception as e:
     print("Error connecting to Moka")
+    error_message = str(e) + ". Error connecting to Moka. Contact bioinformatics team "
     path_to_runfolder = config.path
-    error_log(path_to_runfolder, e)
+    error_log(path_to_runfolder, error_message)
+    exit()
     
 '''================== Run script =========================== ''' 
 
