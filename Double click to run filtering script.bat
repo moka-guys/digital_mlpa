@@ -1,3 +1,3 @@
 @echo off
-F:\Moka\Files\Software\Python\python.exe H:\06_digital_mlpa\scripts\digital_mlpa_filtering.py
+S:\Genetics_Data2\Array\Software\python-3.10.0-embed-amd64\python H:\06_digital_mlpa\scripts\digital_mlpa_filtering.py
 pause
