@@ -160,10 +160,10 @@ def get_gene_symbols_from_moka(run_df):
             # is the key and the list of genes in the value pair 
             pan_numbers_with_genes[patient_pan_number] = gene_list
             error_occurred = False
-            e = " "
-    except Exception as e:
+            exception_error_msg = " "
+    except Exception as exception_error_msg:
         error_occurred = True
-    return(pan_numbers_with_genes, error_occurred, e)
+    return(pan_numbers_with_genes, error_occurred, exception_error_msg)
     
 
 def filter_results(run_df, path_to_runfolder, pan_numbers_genes_dic):
@@ -297,9 +297,9 @@ today = date.today()
 # Attempt to instantiate moka connector
 try:
     mc = MokaConnector()
-except Exception as e:
+except Exception as exception_error_msg:
     print("Error connecting to Moka")
-    error_message = str(e) + ". Error connecting to Moka. Contact bioinformatics team "
+    error_message = str(exception_error_msg) + ". Error connecting to Moka. Contact bioinformatics team "
     path_to_runfolder = config.path
     error_log(path_to_runfolder, error_message)
     exit()
@@ -341,12 +341,12 @@ try:
                     move_rename_processed_file(error_occurred, file)
     if count == 0:
         print( "No files ending in .xls in folder to process")
-except Exception as e:
+except Exception as exception_error_msg:
     error_occurred = True
     if error_occurred == True:
         # If an unknown error occurred, save to error file
         path_to_runfolder = config.path
-        error_log(path_to_runfolder,  e)
+        error_log(path_to_runfolder,  exception_error_msg)
         print("Unexpected error occurred, contain bioinformatics team")       
 
 
