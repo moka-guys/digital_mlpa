@@ -1,6 +1,7 @@
 # coding: utf-8
 # Paths
 #path = "P:/Bioinformatics/UAT/Julia_digital_MLPA_testing/"
+path = "home/natasha/Documents"
 #path = "H:/06_digital_mlpa/"
 processed_path=path+"processed/"
 logfile_path = path+"logfiles"
