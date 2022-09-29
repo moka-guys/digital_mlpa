@@ -11,9 +11,8 @@ import xlsxwriter
 import sys
 
 # Need to change the python path to find the config
-path_to_config = "H:/06_digital_mlpa/scripts"
+path_to_config = "home/natasha/Documents/digital_mlpa"
 sys.path.insert(0, path_to_config)
-
 
 ### This script will ##
 # 1) Import data from csv
