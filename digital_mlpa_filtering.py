@@ -84,8 +84,8 @@ def processed_folder_check(path):
             else:
                 os.makedirs(config.path + "/processed")
     except:
-        print("Processed folder already exists")
-        
+        processed_exists= False
+    
 def load_file(file):
     '''
     This function checks if files have already been processed 
@@ -374,8 +374,6 @@ except Exception as exception_error_msg:
 count = 0
 try:
     for file in os.listdir(config.path):
-        #check if processed folder exists
-        processed_folder_check(config.path)
         # Look for all .xlsx files in the folder
         if file.endswith(config.samplesheet_extension):
             print("Found this " + config.samplesheet_extension + " file : " + file)
@@ -394,6 +392,8 @@ try:
             elif error_occurred == False:
                 # File hasn't been processed, continue with processing
                 print(file + " has not been processed, running filtering scripts")
+                #Check if processed folder exists
+                processed_folder_check(config.path)
                 # Make run folder directory
                 make_run_folder(path_to_runfolder, file)
                 # Filter and save new files via a moka query for genes
